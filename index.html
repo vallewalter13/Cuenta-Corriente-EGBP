@@ -1907,11 +1907,19 @@ async function getScript(action, params) {
 }
 
 async function callScript(payload) {
-  if (!scriptUrl) return; // silent if not configured
-  const url = new URL(scriptUrl);
-  url.searchParams.set('payload', encodeURIComponent(JSON.stringify(payload)));
-  // no-cors: we can't read the response but the write goes through
-  await fetch(url.toString(), { method: 'GET', mode: 'no-cors', redirect: 'follow' });
+  if (!scriptUrl) return;
+  try {
+    const url = new URL(scriptUrl);
+    url.searchParams.set('payload', encodeURIComponent(JSON.stringify(payload)));
+    const res  = await fetch(url.toString(), { redirect: 'follow' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Error remoto');
+    return json.data;
+  } catch(e) {
+    console.warn('callScript error:', e.message);
+    throw e;
+  }
 }
 
 
