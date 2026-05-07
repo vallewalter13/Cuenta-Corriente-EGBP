@@ -1865,7 +1865,7 @@ window.openEditClient = function(id) {
 // ── Config ────────────────────────────────────────────
 const SCRIPT_URL_KEY  = 'cta_script_url';
 const LAST_SYNC_KEY   = 'cta_last_sync';
-const HARDCODED_URL   = 'https://script.google.com/macros/s/AKfycbwRO_-B1xKxHgbEMM5SvRYqqWrP6-HeagZdrwpS77htQdCJHscEPTk2r2SavfA39vOa/exec';
+const HARDCODED_URL   = 'https://script.google.com/macros/s/AKfycbzDpmrUttEj1H-ZlDjaZiODU0gisBUTJfa0BvtreMskMIPTn0R6YRSJPtL3gRdK3nrj/exec';
 let   scriptUrl       = localStorage.getItem(SCRIPT_URL_KEY) || HARDCODED_URL;
 // Pre-save so all users have it from first load
 if (!localStorage.getItem(SCRIPT_URL_KEY)) {
@@ -1894,31 +1894,44 @@ function setSyncStatus(status, msg) {
 // Works from: localhost, Netlify, any http/https server
 // Does NOT work from file:// — use a local server (see instructions)
 
-async function getScript(action, params) {
-  if (!scriptUrl) throw new Error('URL no configurada');
-  const url = new URL(scriptUrl);
-  url.searchParams.set('action', action);
-  if (params) Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, String(v)));
-  const res  = await fetch(url.toString(), { redirect: 'follow' });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.error || 'Error remoto');
-  return json.data;
+// ── JSONP core (works from GitHub Pages, bypasses CORS/redirects) ──
+function jsonp(url, params) {
+  return new Promise((resolve, reject) => {
+    const cb = '_jcb' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+    const script = document.createElement('script');
+    const timer  = setTimeout(() => { cleanup(); reject(new Error('Timeout al conectar')); }, 20000);
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[cb];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+    window[cb] = function(data) {
+      cleanup();
+      if (data && data.ok) resolve(data.data);
+      else reject(new Error((data && data.error) || 'Error remoto'));
+    };
+    const u = new URL(url);
+    u.searchParams.set('callback', cb);
+    if (params) Object.entries(params).forEach(([k,v]) => u.searchParams.set(k, String(v)));
+    script.src = u.toString();
+    script.onerror = () => { cleanup(); reject(new Error('No se pudo cargar el script')); };
+    document.head.appendChild(script);
+  });
 }
 
+// Reads: JSONP GET
+async function getScript(action, params) {
+  if (!scriptUrl) throw new Error('URL no configurada');
+  return jsonp(scriptUrl, { action, ...(params || {}) });
+}
+
+// Writes: JSONP GET with payload (Apps Script reads e.parameter.payload)
 async function callScript(payload) {
   if (!scriptUrl) return;
   try {
-    const url = new URL(scriptUrl);
-    url.searchParams.set('payload', encodeURIComponent(JSON.stringify(payload)));
-    const res  = await fetch(url.toString(), { redirect: 'follow' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const json = await res.json();
-    if (!json.ok) throw new Error(json.error || 'Error remoto');
-    return json.data;
+    return await jsonp(scriptUrl, { payload: encodeURIComponent(JSON.stringify(payload)) });
   } catch(e) {
-    console.warn('callScript error:', e.message);
-    throw e;
+    console.warn('callScript:', e.message);
   }
 }
 
@@ -2089,7 +2102,7 @@ function openConfig() {
 }
 
 async function testConnection() {
-  const url = document.getElementById('scriptUrl').value.trim();
+  const url  = document.getElementById('scriptUrl').value.trim();
   const res  = document.getElementById('testResult');
   res.style.display = 'block';
   res.innerHTML = '⏳ Probando conexión…'; res.style.color = '';
